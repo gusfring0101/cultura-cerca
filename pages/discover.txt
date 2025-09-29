@@ -1,0 +1,300 @@
+import React, { useState, useEffect } from "react";
+import { InvokeLLM } from "@/integrations/Core";
+import { CulturalPlace } from "@/entities/CulturalPlace";
+import { User } from "@/entities/User";
+import { AnimatePresence, motion } from "framer-motion";
+import { Loader2, MapPin } from "lucide-react";
+
+import LocationSelector from "../components/discover/LocationSelector";
+import FilterPanel from "../components/discover/FilterPanel";
+import PlaceCard from "../components/discover/PlaceCard";
+
+export default function Discover() {
+  const [location, setLocation] = useState(null);
+  const [filters, setFilters] = useState({
+    maxDistance: 10,
+    maxBudget: 50,
+    interests: []
+  });
+  const [places, setPlaces] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [user, setUser] = useState(null);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  useEffect(() => {
+    loadUser();
+    loadFavorites();
+  }, []);
+
+  const loadUser = async () => {
+    try {
+      const currentUser = await User.me();
+      setUser(currentUser);
+      if (currentUser.location) {
+        setLocation(currentUser.location);
+      }
+      if (currentUser.preferences) {
+        setFilters({
+          maxDistance: currentUser.preferences.max_distance || 10,
+          maxBudget: currentUser.preferences.max_budget || 50,
+          interests: currentUser.preferences.interests || []
+        });
+      }
+    } catch (error) {
+      console.log("Usuario no autenticado");
+    }
+  };
+
+  const loadFavorites = async () => {
+    try {
+      const userPlaces = await CulturalPlace.list();
+      setFavorites(userPlaces);
+    } catch (error) {
+      console.error("Error cargando favoritos:", error);
+    }
+  };
+
+  const handleLocationChange = async (newLocation) => {
+    setLocation(newLocation);
+    if (user) {
+      try {
+        await User.updateMyUserData({
+          ...user,
+          location: newLocation
+        });
+      } catch (error) {
+        console.error("Error guardando ubicación:", error);
+      }
+    }
+  };
+
+  const handleFiltersChange = async (newFilters) => {
+    setFilters(newFilters);
+    if (user) {
+      try {
+        await User.updateMyUserData({
+          ...user,
+          preferences: {
+            max_distance: newFilters.maxDistance,
+            max_budget: newFilters.maxBudget,
+            interests: newFilters.interests
+          }
+        });
+      } catch (error) {
+        console.error("Error guardando preferencias:", error);
+      }
+    }
+  };
+
+  const searchCulturalPlaces = async () => {
+    if (!location) {
+      alert("Por favor, selecciona una ubicación primero");
+      return;
+    }
+
+    setIsSearching(true);
+    setHasSearched(true);
+
+    try {
+      const interestsText = filters.interests.length > 0 
+        ? `especialmente interesado en: ${filters.interests.join(', ')}` 
+        : "abierto a todo tipo de cultura";
+
+      const prompt = `Encuentra lugares culturales cerca de ${location.address} en un radio de ${filters.maxDistance}km con un presupuesto máximo de ${filters.maxBudget}€. El usuario está ${interestsText}.
+
+Busca información actual y detallada sobre museos, galerías, teatros, conciertos, exposiciones, bibliotecas, centros culturales, cines, óperas y lugares de danza. Include información sobre eventos actuales si están disponibles.
+
+Para cada lugar, proporciona:
+- Nombre exacto
+- Descripción detallada
+- Categoría (museo, galeria, teatro, concierto, exposicion, biblioteca, centro_cultural, cine, opera, danza)
+- Dirección completa
+- Horarios de apertura
+- Precio promedio
+- Sitio web
+- Teléfono
+- Puntuación (si está disponible)
+- Eventos actuales con fechas y precios
+
+Ordena por relevancia y proximidad.`;
+
+      const result = await InvokeLLM({
+        prompt,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            places: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  description: { type: "string" },
+                  category: { type: "string" },
+                  address: { type: "string" },
+                  opening_hours: { type: "string" },
+                  avg_price: { type: "number" },
+                  website: { type: "string" },
+                  phone: { type: "string" },
+                  rating: { type: "number" },
+                  price_range: { type: "string" },
+                  current_events: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        title: { type: "string" },
+                        description: { type: "string" },
+                        start_date: { type: "string" },
+                        end_date: { type: "string" },
+                        price: { type: "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+
+      const processedPlaces = result.places?.map(place => ({
+        ...place,
+        location: {
+          address: place.address,
+          lat: location.lat + (Math.random() - 0.5) * 0.02,
+          lng: location.lng + (Math.random() - 0.5) * 0.02
+        },
+        image_url: `https://images.unsplash.com/800x600/?${encodeURIComponent(place.category)},culture,art`
+      })) || [];
+
+      setPlaces(processedPlaces);
+    } catch (error) {
+      console.error("Error buscando lugares:", error);
+      alert("Error buscando lugares culturales. Por favor, inténtalo de nuevo.");
+    }
+
+    setIsSearching(false);
+  };
+
+  const handleFavorite = async (place) => {
+    try {
+      const isFavorite = favorites.some(fav => fav.name === place.name);
+      if (!isFavorite) {
+        const newFavorite = await CulturalPlace.create(place);
+        setFavorites([...favorites, newFavorite]);
+      }
+    } catch (error) {
+      console.error("Error añadiendo a favoritos:", error);
+    }
+  };
+
+  const isFavorite = (place) => {
+    return favorites.some(fav => fav.name === place.name);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50 to-purple-50 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-8"
+        >
+          <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-indigo-600 via-purple-600 to-amber-500 bg-clip-text text-transparent mb-3">
+            Descubre Cultura Cerca
+          </h1>
+          <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+            Encuentra experiencias culturales únicas en tu ciudad adaptadas a tus gustos, presupuesto y ubicación
+          </p>
+        </motion.div>
+
+        <div className="grid lg:grid-cols-3 gap-8 mb-8">
+          <div className="lg:col-span-1 space-y-6">
+            <LocationSelector 
+              location={location} 
+              onLocationChange={handleLocationChange}
+            />
+            <FilterPanel 
+              filters={filters}
+              onFiltersChange={handleFiltersChange}
+              onSearch={searchCulturalPlaces}
+            />
+          </div>
+
+          <div className="lg:col-span-2 flex">
+            {isSearching ? (
+              <div className="flex flex-col items-center justify-center w-full min-h-[600px] bg-white/50 backdrop-blur-sm rounded-2xl border border-indigo-100">
+                <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mb-4" />
+                <p className="text-lg font-medium text-slate-700">Buscando lugares culturales...</p>
+                <p className="text-sm text-slate-500 mt-2">Esto puede tardar unos segundos</p>
+              </div>
+            ) : hasSearched ? (
+              places.length > 0 ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="space-y-6 w-full"
+                >
+                  <h2 className="text-2xl font-bold text-slate-800 mb-6">
+                    Encontramos {places.length} lugares culturales para ti
+                  </h2>
+                  <div className="grid gap-6">
+                    <AnimatePresence>
+                      {places.map((place, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -20 }}
+                          transition={{ delay: index * 0.1 }}
+                        >
+                          <PlaceCard
+                            place={place}
+                            onFavorite={handleFavorite}
+                            isFavorite={isFavorite(place)}
+                          />
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="flex items-center justify-center w-full min-h-[600px] bg-white/50 backdrop-blur-sm rounded-2xl border border-indigo-100">
+                  <div className="text-center">
+                    <p className="text-lg text-slate-600">
+                      No se encontraron lugares culturales con tus criterios.
+                    </p>
+                    <p className="text-sm text-slate-500 mt-2">
+                      Prueba ampliando tu radio de búsqueda o presupuesto.
+                    </p>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div className="flex items-center justify-center w-full min-h-[600px] bg-white/50 backdrop-blur-sm rounded-2xl border border-indigo-100">
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="text-center space-y-4"
+                >
+                  <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full mx-auto flex items-center justify-center">
+                    <MapPin className="w-10 h-10 text-indigo-600" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-slate-700">
+                    ¡Comienza tu búsqueda cultural!
+                  </h3>
+                  <p className="text-slate-500 max-w-md mx-auto">
+                    Selecciona tu ubicación, ajusta tus preferencias y descubre lugares increíbles cerca de ti.
+                  </p>
+                </motion.div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,110 @@
+{
+  "name": "CulturalPlace",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nombre del lugar cultural"
+    },
+    "description": {
+      "type": "string",
+      "description": "Descripción del lugar"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "museo",
+        "galeria",
+        "teatro",
+        "concierto",
+        "exposicion",
+        "biblioteca",
+        "centro_cultural",
+        "cine",
+        "opera",
+        "danza"
+      ],
+      "description": "Categoría del lugar cultural"
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "address": {
+          "type": "string"
+        }
+      },
+      "description": "Ubicación del lugar"
+    },
+    "price_range": {
+      "type": "string",
+      "enum": [
+        "gratis",
+        "economico",
+        "moderado",
+        "caro"
+      ],
+      "description": "Rango de precios"
+    },
+    "avg_price": {
+      "type": "number",
+      "description": "Precio promedio en euros"
+    },
+    "opening_hours": {
+      "type": "string",
+      "description": "Horarios de apertura"
+    },
+    "website": {
+      "type": "string",
+      "description": "Sitio web oficial"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Teléfono de contacto"
+    },
+    "rating": {
+      "type": "number",
+      "description": "Puntuación promedio (1-5)"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "URL de imagen del lugar"
+    },
+    "current_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "price": {
+            "type": "number"
+          }
+        }
+      },
+      "description": "Eventos actuales"
+    }
+  },
+  "required": [
+    "name",
+    "category",
+    "location"
+  ]
+}
