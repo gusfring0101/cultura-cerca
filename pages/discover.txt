@@ -1,20 +1,23 @@
 import React, { useState, useEffect } from "react";
-import { InvokeLLM } from "@/integrations/Core";
 import { CulturalPlace } from "@/entities/CulturalPlace";
 import { User } from "@/entities/User";
 import { AnimatePresence, motion } from "framer-motion";
-import { Loader2, MapPin } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
-import LocationSelector from "../components/discover/LocationSelector";
-import FilterPanel from "../components/discover/FilterPanel";
-import PlaceCard from "../components/discover/PlaceCard";
+import LocationSelector from "./components/discover/LocationSelector";
+import FilterPanel from "./components/discover/FilterPanel";
+import PlaceCard from "./components/discover/PlaceCard";
+
+const WEBHOOK_URL =
+  import.meta?.env?.VITE_N8N_WEBHOOK_URL ||
+  "https://cultura-cerca.duckdns.org/webhook/cc-search";
 
 export default function Discover() {
   const [location, setLocation] = useState(null);
   const [filters, setFilters] = useState({
     maxDistance: 10,
     maxBudget: 50,
-    interests: []
+    interests: [],
   });
   const [places, setPlaces] = useState([]);
   const [favorites, setFavorites] = useState([]);
@@ -31,17 +34,18 @@ export default function Discover() {
     try {
       const currentUser = await User.me();
       setUser(currentUser);
-      if (currentUser.location) {
+      if (currentUser?.location) {
         setLocation(currentUser.location);
       }
-      if (currentUser.preferences) {
+      if (currentUser?.preferences) {
         setFilters({
-          maxDistance: currentUser.preferences.max_distance || 10,
-          maxBudget: currentUser.preferences.max_budget || 50,
-          interests: currentUser.preferences.interests || []
+          maxDistance: currentUser.preferences.max_distance ?? 10,
+          maxBudget: currentUser.preferences.max_budget ?? 50,
+          interests: currentUser.preferences.interests ?? [],
         });
       }
-    } catch (error) {
+    } catch (_e) {
+      // Usuario no autenticado o sin datos
       console.log("Usuario no autenticado");
     }
   };
@@ -59,10 +63,8 @@ export default function Discover() {
     setLocation(newLocation);
     if (user) {
       try {
-        await User.updateMyUserData({
-          ...user,
-          location: newLocation
-        });
+        // Actualizamos sólo el campo que nos interesa
+        await User.updateMyUserData({ location: newLocation });
       } catch (error) {
         console.error("Error guardando ubicación:", error);
       }
@@ -74,12 +76,11 @@ export default function Discover() {
     if (user) {
       try {
         await User.updateMyUserData({
-          ...user,
           preferences: {
             max_distance: newFilters.maxDistance,
             max_budget: newFilters.maxBudget,
-            interests: newFilters.interests
-          }
+            interests: newFilters.interests,
+          },
         });
       } catch (error) {
         console.error("Error guardando preferencias:", error);
@@ -97,94 +98,77 @@ export default function Discover() {
     setHasSearched(true);
 
     try {
-      const interestsText = filters.interests.length > 0 
-        ? `especialmente interesado en: ${filters.interests.join(', ')}` 
-        : "abierto a todo tipo de cultura";
+      // Payload que espera tu workflow de n8n
+      const payload = {
+        location: { lat: location.lat, lng: location.lng },
+        maxKm: Number(filters.maxDistance) || 10,
+        maxBudget: Number(filters.maxBudget) || 50,
+        prefs: Array.isArray(filters.interests) ? filters.interests : [],
+      };
 
-      const prompt = `Encuentra lugares culturales cerca de ${location.address} en un radio de ${filters.maxDistance}km con un presupuesto máximo de ${filters.maxBudget}€. El usuario está ${interestsText}.
-
-Busca información actual y detallada sobre museos, galerías, teatros, conciertos, exposiciones, bibliotecas, centros culturales, cines, óperas y lugares de danza. Include información sobre eventos actuales si están disponibles.
-
-Para cada lugar, proporciona:
-- Nombre exacto
-- Descripción detallada
-- Categoría (museo, galeria, teatro, concierto, exposicion, biblioteca, centro_cultural, cine, opera, danza)
-- Dirección completa
-- Horarios de apertura
-- Precio promedio
-- Sitio web
-- Teléfono
-- Puntuación (si está disponible)
-- Eventos actuales con fechas y precios
-
-Ordena por relevancia y proximidad.`;
-
-      const result = await InvokeLLM({
-        prompt,
-        add_context_from_internet: true,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            places: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  name: { type: "string" },
-                  description: { type: "string" },
-                  category: { type: "string" },
-                  address: { type: "string" },
-                  opening_hours: { type: "string" },
-                  avg_price: { type: "number" },
-                  website: { type: "string" },
-                  phone: { type: "string" },
-                  rating: { type: "number" },
-                  price_range: { type: "string" },
-                  current_events: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        title: { type: "string" },
-                        description: { type: "string" },
-                        start_date: { type: "string" },
-                        end_date: { type: "string" },
-                        price: { type: "number" }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+      const res = await fetch(WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
 
-      const processedPlaces = result.places?.map(place => ({
-        ...place,
-        location: {
-          address: place.address,
-          lat: location.lat + (Math.random() - 0.5) * 0.02,
-          lng: location.lng + (Math.random() - 0.5) * 0.02
-        },
-        image_url: `https://images.unsplash.com/800x600/?${encodeURIComponent(place.category)},culture,art`
-      })) || [];
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Webhook error (${res.status}): ${errText}`);
+      }
+
+      const data = await res.json();
+      // Esperamos un objeto con { places: [...] }
+      const incoming = Array.isArray(data?.places) ? data.places : [];
+
+      // Normalizamos al modelo de tarjeta que usas en la UI
+      const processedPlaces = incoming.map((p) => {
+        // campos esperados por PlaceCard y por tus entidades
+        return {
+          name: p.name || "Lugar cultural",
+          description: p.description || "",
+          category: p.category || "museo",
+          location: {
+            // si el webhook devuelve address separado, lo ponemos aquí
+            address: p.address || p.location?.address || "Dirección no disponible",
+            // si no viene lat/lng reales, "jitter" alrededor de la búsqueda para el mapa
+            lat:
+              p.location?.lat ??
+              location.lat + (Math.random() - 0.5) * 0.02,
+            lng:
+              p.location?.lng ??
+              location.lng + (Math.random() - 0.5) * 0.02,
+          },
+          opening_hours: p.opening_hours || "",
+          avg_price: typeof p.avg_price === "number" ? p.avg_price : undefined,
+          website: p.website || "",
+          phone: p.phone || "",
+          rating: typeof p.rating === "number" ? p.rating : undefined,
+          price_range: p.price_range || "",
+          current_events: Array.isArray(p.current_events) ? p.current_events : [],
+          image_url:
+            p.image_url ||
+            `https://source.unsplash.com/800x600/?${encodeURIComponent(
+              p.category || "culture"
+            )},culture,art`,
+        };
+      });
 
       setPlaces(processedPlaces);
     } catch (error) {
       console.error("Error buscando lugares:", error);
       alert("Error buscando lugares culturales. Por favor, inténtalo de nuevo.");
+    } finally {
+      setIsSearching(false);
     }
-
-    setIsSearching(false);
   };
 
   const handleFavorite = async (place) => {
     try {
-      const isFavorite = favorites.some(fav => fav.name === place.name);
+      const isFavorite = favorites.some((fav) => fav.name === place.name);
       if (!isFavorite) {
         const newFavorite = await CulturalPlace.create(place);
-        setFavorites([...favorites, newFavorite]);
+        setFavorites((prev) => [...prev, newFavorite]);
       }
     } catch (error) {
       console.error("Error añadiendo a favoritos:", error);
@@ -192,7 +176,7 @@ Ordena por relevancia y proximidad.`;
   };
 
   const isFavorite = (place) => {
-    return favorites.some(fav => fav.name === place.name);
+    return favorites.some((fav) => fav.name === place.name);
   };
 
   return (
@@ -213,11 +197,11 @@ Ordena por relevancia y proximidad.`;
 
         <div className="grid lg:grid-cols-3 gap-8 mb-8">
           <div className="lg:col-span-1 space-y-6">
-            <LocationSelector 
-              location={location} 
+            <LocationSelector
+              location={location}
               onLocationChange={handleLocationChange}
             />
-            <FilterPanel 
+            <FilterPanel
               filters={filters}
               onFiltersChange={handleFiltersChange}
               onSearch={searchCulturalPlaces}
@@ -245,11 +229,11 @@ Ordena por relevancia y proximidad.`;
                     <AnimatePresence>
                       {places.map((place, index) => (
                         <motion.div
-                          key={index}
+                          key={`${place.name}-${index}`}
                           initial={{ opacity: 0, y: 20 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -20 }}
-                          transition={{ delay: index * 0.1 }}
+                          transition={{ delay: index * 0.05 }}
                         >
                           <PlaceCard
                             place={place}
@@ -275,19 +259,9 @@ Ordena por relevancia y proximidad.`;
               )
             ) : (
               <div className="flex items-center justify-center w-full min-h-[600px] bg-white/50 backdrop-blur-sm rounded-2xl border border-indigo-100">
-                <motion.div
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  className="text-center space-y-4"
-                >
-                  <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full mx-auto flex items-center justify-center">
-                    <MapPin className="w-10 h-10 text-indigo-600" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-slate-700">
-                    ¡Comienza tu búsqueda cultural!
-                  </h3>
-                  <p className="text-slate-500 max-w-md mx-auto">
-                    Selecciona tu ubicación, ajusta tus preferencias y descubre lugares increíbles cerca de ti.
+                <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }}>
+                  <p className="text-slate-600">
+                    Ajusta tu ubicación y filtros, y pulsa <strong>Buscar</strong>.
                   </p>
                 </motion.div>
               </div>
