@@ -1,0 +1,11 @@
+// Si ya tenías un modelo utilitario, colócalo aquí.
+// Ejemplo mínimo:
+export function normalizePlace(raw = {}) {
+  return {
+    id: raw.id ?? crypto.randomUUID?.() ?? String(Date.now()),
+    name: raw.name ?? 'Lugar',
+    type: raw.type ?? raw.category ?? '',
+    distance: raw.distance ?? null,
+    price: raw.price ?? null,
+  };
+}
