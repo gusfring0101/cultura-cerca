@@ -1,8 +1,0 @@
-export default function DiscoverPage() {
-  return (
-    <main style={{ padding: 24 }}>
-      <h1>Discover</h1>
-      <p>Pantalla principal de CulturaCerca.</p>
-    </main>
-  );
-}
